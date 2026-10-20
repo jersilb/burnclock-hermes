@@ -20,14 +20,17 @@ import {
 import { jsx } from 'react/jsx-runtime'
 
 const ID = 'burnclock'
-const CLI = 'burnclock'
+// The gateway runs shell.exec with a sanitized PATH that does not always include
+// ~/.local/bin (where pip --user and pipx put the CLI), so resolve once across
+// the common install locations instead of trusting PATH alone.
+const CLI_CMD = 'BIN="$(command -v burnclock || true)"; for c in "$BIN" "$HOME/.local/bin/burnclock" /opt/homebrew/bin/burnclock /usr/local/bin/burnclock; do if [ -n "$c" ] && [ -x "$c" ]; then exec "$c" badge --json; fi; done; echo "burnclock not found" >&2; exit 127'
 const REFRESH_MS = 60_000
 
 function badgeQuery() {
   return {
     queryKey: [ID, 'badge'],
     queryFn: async () => {
-      const params = { command: `${CLI} badge --json` }
+      const params = { command: CLI_CMD }
       // The gateway's session-bound shell.exec rejects a command-only request
       // with invalid_params; bind it to the session the user is looking at.
       const sid = host.state.activeSessionId.get()

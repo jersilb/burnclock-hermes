@@ -22,7 +22,10 @@ five days, amber under five, red under two.
 ## Requirements
 
 - Hermes Desktop **0.22.0 or newer**.
-- The **burnclock CLI** on `PATH` (`pip install burnclock`, 0.1.2+).
+- The **burnclock CLI** installed with `pip install burnclock` (0.1.2+) or pipx.
+  The plugin looks on `PATH`, then `~/.local/bin`, `/opt/homebrew/bin` and
+  `/usr/local/bin`, because Hermes runs plugin shell commands with a sanitized
+  `PATH` that may omit the user-site bin directory.
 - Burnclock configured with at least one provider key, and one successful
   `burnclock badge --refresh` so a cache exists.
 
