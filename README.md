@@ -6,14 +6,15 @@ local-first CLI for answering “how much is left, and how long will it last?”
 
 ![Burnclock chip in the Hermes status bar](docs/chip.png)
 
-`DeepSeek $4.68 · 1.6d` is one line from burnclock's cache: provider, remaining
+`DeepSeek $3.80 · 1.3d` is one line from burnclock's cache: provider, remaining
 balance, and estimated runway at the current burn rate. The dot is green above
 five days, amber under five, red under two.
 
 ## What it does
 
 - Adds a small watch chip to `statusBar.right`.
-- Every 60 seconds it runs `burnclock badge --json` and renders the cached row.
+- Every 60 seconds it reads burnclock's cache files (`badge.txt` for the line,
+  `badge.json` for status and runway). It never spawns the CLI.
 - Clicking the chip shows the full reading (provider, balance, runway, cache
   timestamp) and re-reads the cache.
 - When there is no cache yet, it shows `burnclock —` and explains how to
@@ -22,10 +23,9 @@ five days, amber under five, red under two.
 ## Requirements
 
 - Hermes Desktop **0.22.0 or newer**.
-- The **burnclock CLI** installed with `pip install burnclock` (0.1.2+) or pipx.
-  The plugin looks on `PATH`, then `~/.local/bin`, `/opt/homebrew/bin` and
-  `/usr/local/bin`, because Hermes runs plugin shell commands with a sanitized
-  `PATH` that may omit the user-site bin directory.
+- The **burnclock CLI** installed with `pip install burnclock` (0.1.2+) or pipx,
+  to populate the cache. The plugin does not need the CLI on its `PATH`; it
+  reads the cache files directly.
 - Burnclock configured with at least one provider key, and one successful
   `burnclock badge --refresh` so a cache exists.
 
@@ -45,8 +45,8 @@ Manual install, for development:
 
 ```bash
 git clone https://github.com/jersilb/burnclock-hermes
-mkdir -p ~/.hermes/desktop-plugins
-cp -R burnclock-hermes/burnclock ~/.hermes/desktop-plugins/burnclock
+mkdir -p ~/.hermes/desktop-plugins/burnclock
+cp burnclock-hermes/desktop/plugin.js ~/.hermes/desktop-plugins/burnclock/plugin.js
 ```
 
 Then reload the Desktop plugins (⌘K → “Reload desktop plugins”, or restart the
@@ -62,9 +62,10 @@ burnclock badge --refresh
 
 ## What it reads, and what it does not
 
-**Reads:** the stdout of `burnclock badge --json`, which comes from
-`~/.cache/burnclock/badge.json`. That file contains a provider label, balance,
-currency, runway estimate and timestamp.
+**Reads:** burnclock's own cache files, resolved the same way the CLI resolves
+them (`$BURNCLOCK_BADGE_CACHE`, then `$XDG_CACHE_HOME/burnclock/badge.json`,
+then `~/.cache/burnclock/badge.json`). `badge.txt` supplies the one-line label;
+`badge.json` supplies the provider row, status, runway and timestamp.
 
 **Does not read:** environment files, `~/.hermes/.env`, Hermes credentials,
 provider keys, browser profiles, or any file outside burnclock's own cache.
@@ -72,9 +73,10 @@ It has no telemetry, no analytics, no update checker, and makes no network
 calls itself.
 
 **Shell command:** each refresh runs exactly one command via the Desktop SDK's
-`shell.exec`: `burnclock badge --json`, bound to the active session. It is a
-cache read and normally returns in well under a second. The plugin never runs a
-refresh that needs credentials; that stays a user action in their own terminal.
+`shell.exec`: a `cat` of those two cache files, bound to the active session. It
+never executes the burnclock CLI, so it cannot trigger a collection or write to
+the cache. Populating the cache stays a user action in their own terminal,
+where their provider keys are available.
 
 ## Notes
 

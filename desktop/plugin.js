@@ -1,12 +1,13 @@
 // Burnclock — status-bar chip with the provider balance and runway.
 //
-// Data path: `shell.exec` runs `burnclock badge --json`, which reads burnclock's
-// local cache and returns in milliseconds. The plugin never reads env files or
-// credentials and makes no network calls; the CLI owns provider access. A stale
-// cache is refreshed by the CLI itself when the user runs `burnclock badge
-// --refresh` in a terminal, where their provider keys are available.
+// Data path: the plugin reads burnclock's local cache files directly
+// (`badge.txt` for the one-line label, `badge.json` for status/runway) via one
+// `shell.exec` cat. It never runs the CLI, so it can never trigger a refresh,
+// never touches provider keys and makes no network calls. The CLI owns
+// collection; the user populates the cache by running `burnclock badge
+// --refresh` in a terminal where their keys are available.
 //
-// Requires: burnclock CLI on PATH (pip install burnclock).
+// Requires: the burnclock CLI (pip install burnclock) to populate the cache.
 
 import {
   Codicon,
@@ -20,29 +21,32 @@ import {
 import { jsx } from 'react/jsx-runtime'
 
 const ID = 'burnclock'
-// The gateway runs shell.exec with a sanitized PATH that does not always include
-// ~/.local/bin (where pip --user and pipx put the CLI), so resolve once across
-// the common install locations instead of trusting PATH alone.
-const CLI_CMD = 'BIN="$(command -v burnclock || true)"; for c in "$BIN" "$HOME/.local/bin/burnclock" /opt/homebrew/bin/burnclock /usr/local/bin/burnclock; do if [ -n "$c" ] && [ -x "$c" ]; then exec "$c" badge --json; fi; done; echo "burnclock not found" >&2; exit 127'
+// Resolve the cache the same way burnclock does: BURNCLOCK_BADGE_CACHE wins,
+// then XDG_CACHE_HOME, then ~/.cache. Read only — never execute the CLI here,
+// because `burnclock badge` spawns a refresh when the cache is stale and a
+// refresh without provider keys would overwrite a good cache with an error row.
+const CACHE_CMD = 'J="${BURNCLOCK_BADGE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/burnclock/badge.json}"; T="${J%.json}.txt"; [ -f "$J" ] || exit 3; if [ -f "$T" ]; then sed -n \'1p\' "$T"; fi; echo "@@"; cat "$J"'
 const REFRESH_MS = 60_000
 
 function badgeQuery() {
   return {
     queryKey: [ID, 'badge'],
     queryFn: async () => {
-      const params = { command: CLI_CMD }
+      const params = { command: CACHE_CMD }
       // The gateway's session-bound shell.exec rejects a command-only request
       // with invalid_params; bind it to the session the user is looking at.
       const sid = host.state.activeSessionId.get()
       if (sid) params.session_id = sid
       const res = await host.request('shell.exec', params)
-      // Exit 4/5/6 is a worst-of-status code from collecting several providers,
-      // not necessarily this row's; a valid JSON payload is success.
       const out = res && typeof res.stdout === 'string' ? res.stdout.trim() : ''
       if (!out) return null
+      const cut = out.indexOf('\n@@\n')
+      if (cut < 0) return null
+      const line = out.slice(0, cut).trim()
       try {
-        const data = JSON.parse(out)
-        return data && data.provider ? data : null
+        const data = JSON.parse(out.slice(cut + 4))
+        if (!data || !data.provider) return null
+        return line ? { ...data, line } : data
       } catch {
         return null
       }
@@ -70,7 +74,7 @@ function runtimeRunway(provider) {
 
 function tooltip(data, error) {
   if (error) {
-    return 'Burnclock — could not run `burnclock badge`. Install the CLI (pip install burnclock) and make sure it is on PATH.'
+    return 'Burnclock — could not read the burnclock cache (~/.cache/burnclock/badge.json). Run `burnclock badge --refresh` in a terminal once, then this chip updates from the cache.'
   }
   if (!data || !data.provider) {
     return 'Burnclock — no cached balance yet. Run `burnclock badge --refresh` in a terminal once, then this chip updates from the cache.'
