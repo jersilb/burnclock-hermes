@@ -1,0 +1,13 @@
+name: burnclock
+label: Burnclock
+version: "0.1.0"
+author: Jeremy Silbernagel
+homepage: https://github.com/jersilb/burnclock-hermes
+description: >
+  Status-bar chip showing the provider balance and runway that the burnclock CLI
+  tracks, read from its local badge cache. Requires the burnclock CLI
+  (pip install burnclock) to be installed and configured on the same machine.
+  The plugin makes no network calls and reads no credentials.
+tags: [desktop, statusbar, cost, tokens, budget, burnclock]
+requires_hermes: ">=0.22.0"
+license: MIT
