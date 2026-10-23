@@ -1,13 +1,15 @@
 name: burnclock
 label: Burnclock
-version: "0.1.0"
+version: "0.2.0"
 author: Jeremy Silbernagel
 homepage: https://github.com/jersilb/burnclock-hermes
 description: >
-  Status-bar chip showing the provider balance and runway that the burnclock CLI
-  tracks, read from its local badge cache. Requires the burnclock CLI
-  (pip install burnclock) to be installed and configured on the same machine.
-  The plugin makes no network calls and reads no credentials.
-tags: [desktop, statusbar, cost, tokens, budget, burnclock]
+  Status-bar chip and left-nav dashboard page for burnclock, the local-first CLI
+  that tracks AI provider balances and runway. The chip reads burnclock's local
+  badge cache and never runs the CLI. The page reads the same cache for balance,
+  runway and budget, shows the DeepSeek Flash off-peak clock, and makes balance
+  refresh an explicit button. Requires burnclock (pip install burnclock) with a
+  populated cache; the plugin reads no credentials.
+tags: [desktop, statusbar, dashboard, cost, tokens, budget, offpeak, burnclock]
 requires_hermes: ">=0.22.0"
 license: MIT

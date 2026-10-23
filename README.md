@@ -1,8 +1,8 @@
 # Burnclock for Hermes
 
-A Hermes Desktop status-bar chip that shows the provider balance and runway
-tracked by [burnclock](https://pypi.org/project/burnclock/) — an MIT-licensed,
-local-first CLI for answering “how much is left, and how long will it last?”
+A Hermes Desktop status-bar chip **and** a left-nav dashboard for
+[burnclock](https://pypi.org/project/burnclock/) — an MIT-licensed, local-first
+CLI for answering “how much is left, and how long will it last?”
 
 ![Burnclock chip in the Hermes status bar](docs/chip.png)
 
@@ -12,20 +12,33 @@ five days, amber under five, red under two.
 
 ## What it does
 
+**Status-bar chip**
+
 - Adds a small watch chip to `statusBar.right`.
 - Every 60 seconds it reads burnclock's cache files (`badge.txt` for the line,
-  `badge.json` for status and runway). It never spawns the CLI.
-- Clicking the chip shows the full reading (provider, balance, runway, cache
-  timestamp) and re-reads the cache.
+  `badge.json` for status and runway). The chip itself never spawns the CLI.
+- The tooltip shows the full reading: provider, balance, runway and cache
+  timestamp. Clicking the chip opens the Burnclock dashboard.
 - When there is no cache yet, it shows `burnclock —` and explains how to
   populate one. It never invents a number.
+
+**Burnclock dashboard**
+
+- Adds a **Burnclock** row to the left sidebar and a
+  **Burnclock: Open dashboard** command to the palette.
+- Balance card: cached balance, provider status, runway, budget and estimated
+  spend.
+- Off-peak card: the current DeepSeek Flash state, when the cheap window ends,
+  the next peak, the 2× peak delta, minimum-window status and a caution when the
+  bundled holiday calendar does not cover the scan horizon.
+- Command reference for `status`, `forecast`, `offpeak`, `budget show` and
+  `badge --refresh`, plus an index of the surfaces burnclock covers.
 
 ## Requirements
 
 - Hermes Desktop **0.22.0 or newer**.
-- The **burnclock CLI** installed with `pip install burnclock` (0.1.2+) or pipx,
-  to populate the cache. The plugin does not need the CLI on its `PATH`; it
-  reads the cache files directly.
+- The **burnclock CLI** installed with `pip install burnclock` (0.1.5 or newer
+  for the off-peak card; 0.1.2 or newer for the chip).
 - Burnclock configured with at least one provider key, and one successful
   `burnclock badge --refresh` so a cache exists.
 
@@ -50,7 +63,8 @@ cp burnclock-hermes/desktop/plugin.js ~/.hermes/desktop-plugins/burnclock/plugin
 ```
 
 Then reload the Desktop plugins (⌘K → “Reload desktop plugins”, or restart the
-app). The chip appears at the right end of the status bar.
+app). The chip appears at the right end of the status bar and **Burnclock**
+appears in the left navigation.
 
 Populate the first reading in a normal terminal, where your provider keys are
 available:
@@ -60,23 +74,38 @@ pip install burnclock
 burnclock badge --refresh
 ```
 
-## What it reads, and what it does not
+## Data path and permissions
 
-**Reads:** burnclock's own cache files, resolved the same way the CLI resolves
-them (`$BURNCLOCK_BADGE_CACHE`, then `$XDG_CACHE_HOME/burnclock/badge.json`,
-then `~/.cache/burnclock/badge.json`). `badge.txt` supplies the one-line label;
-`badge.json` supplies the provider row, status, runway and timestamp.
+**Chip:** reads burnclock's own cache files, resolved the same way the CLI
+resolves them (`$BURNCLOCK_BADGE_CACHE`, then
+`$XDG_CACHE_HOME/burnclock/badge.json`, then `~/.cache/burnclock/badge.json`).
+`badge.txt` supplies the one-line label; `badge.json` supplies the provider
+row, status, runway and timestamp. One `shell.exec` runs a `cat` of the two
+files, bound to the active session.
 
-**Does not read:** environment files, `~/.hermes/.env`, Hermes credentials,
-provider keys, browser profiles, or any file outside burnclock's own cache.
-It has no telemetry, no analytics, no update checker, and makes no network
-calls itself.
+**Page:** reads the same cache for balance, runway and budget. On mount it runs
+only `burnclock offpeak --json`, which is pure clock math: no provider key, no
+network, no cache write. The off-peak query refreshes every 60 seconds. The page
+never runs a provider refresh on mount or on a timer.
 
-**Shell command:** each refresh runs exactly one command via the Desktop SDK's
-`shell.exec`: a `cat` of those two cache files, bound to the active session. It
-never executes the burnclock CLI, so it cannot trigger a collection or write to
-the cache. Populating the cache stays a user action in their own terminal,
-where their provider keys are available.
+**Refresh button:** an explicit action. Because the Desktop shell has a
+sanitized environment, the page prefers the Hermes burnclock shim at
+`~/.hermes/skills/burnclock/scripts/burnclock-shim.sh`. That shim reads only the
+six allowlisted provider key **names** from `~/.hermes/.env` and passes them to
+the CLI; the plugin never reads, receives, or renders a key value. If the skill
+is not installed, the page falls back to `burnclock` on `PATH`. Provider output
+is scrubbed by `shell.exec` before it reaches the page.
+
+**Not read by the plugin:** browser profiles, Hermes credentials, or any file
+outside burnclock's cache and the optional shim path above. There is no
+telemetry, analytics, or update checker. The plugin itself makes no network
+calls; the CLI does when you explicitly refresh, and `offpeak` does not.
+
+Burnclock's status is an aggregate: `badge --refresh` can exit non-zero because
+one provider is below a threshold or has a rejected key even while the selected
+provider's row is valid. The page compares `updated_at` before and after the
+refresh, reports an updated cache as refreshed, and calls an unchanged cache
+“already current” rather than treating it as a failure.
 
 ## Notes
 
