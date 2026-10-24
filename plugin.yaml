@@ -7,9 +7,10 @@ description: >
   Status-bar chip and left-nav dashboard page for burnclock, the local-first CLI
   that tracks AI provider balances and runway. The chip reads burnclock's local
   badge cache and never runs the CLI. The page reads the same cache for balance,
-  runway and budget, shows the DeepSeek Flash off-peak clock, and makes balance
-  refresh an explicit button. Requires burnclock (pip install burnclock) with a
-  populated cache; the plugin reads no credentials.
+  runway and budget, shows the DeepSeek Flash off-peak clock, and is read-only:
+  it runs no provider refresh and sees no credential, so balances are refreshed
+  by running burnclock badge --refresh in a terminal. Requires burnclock
+  (pip install burnclock) with a populated cache.
 tags: [desktop, statusbar, dashboard, cost, tokens, budget, offpeak, burnclock]
 requires_hermes: ">=0.22.0"
 license: MIT
