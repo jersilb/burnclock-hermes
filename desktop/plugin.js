@@ -5,13 +5,14 @@
 // `shell.exec` cat. It never runs the CLI, so it can never trigger a refresh,
 // never touches provider keys and makes no network calls. The dashboard page
 // also reads the cache for balance/runway, and runs only the pure-clock
-// `burnclock offpeak --json` command for the DeepSeek window. A balance refresh
-// is an explicit button, never a background poll.
+// `burnclock offpeak --json` command for the DeepSeek window. The plugin has no
+// refresh path at all: balances are refreshed by running `burnclock badge
+// --refresh` in a terminal, with burnclock's own environment, and the page just
+// re-reads the cache every 60 seconds.
 //
 // Requires: the burnclock CLI (pip install burnclock) to populate the cache.
 
 import {
-  Button,
   Codicon,
   StatusDot,
   Tip,
@@ -21,7 +22,6 @@ import {
   useQuery
 } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
-import { useCallback, useState } from 'react'
 
 const ID = 'burnclock'
 const ROUTE = '/burnclock'
@@ -34,15 +34,10 @@ const CACHE_CMD = 'J="${BURNCLOCK_BADGE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/b
 // Do not pass --timezone local: 0.1.5 rejects the alias; the default is local.
 const CLI_CMD = 'BIN="${BURNCLOCK_BIN:-$(command -v burnclock 2>/dev/null || true)}"; [ -n "$BIN" ] || BIN="$HOME/.local/bin/burnclock"; [ -x "$BIN" ] || exit 127; '
 const OFFPEAK_CMD = CLI_CMD + '"$BIN" offpeak --json 2>/dev/null'
-// The refresh needs provider keys. shell.exec has a sanitized environment, so
-// prefer the Hermes shim, which reads only the six allowlisted key names from
-// ~/.hermes/.env. Fall back to the PATH binary for installs without the skill.
-const REFRESH_CMD =
-  'SHIM="${BURNCLOCK_SHIM:-$HOME/.hermes/skills/burnclock/scripts/burnclock-shim.sh}"; ' +
-  'if [ -r "$SHIM" ]; then bash "$SHIM" badge --refresh; exit $?; fi; ' +
-  CLI_CMD +
-  '"$BIN" badge --refresh'
-const REFRESH_MS = 60_000
+// No refresh command exists on purpose. Run `burnclock badge --refresh` in a
+// terminal so the CLI sees its own environment; routing Hermes credentials to an
+// external CLI is not something a listed plugin may do.
+const POLL_MS = 60_000
 
 async function runShellResult(command) {
   const params = { command }
@@ -75,8 +70,8 @@ function badgeQuery() {
         return null
       }
     },
-    refetchInterval: REFRESH_MS,
-    staleTime: REFRESH_MS / 2,
+    refetchInterval: POLL_MS,
+    staleTime: POLL_MS / 2,
     retry: 0
   }
 }
@@ -93,8 +88,8 @@ const offpeakQuery = {
       return null
     }
   },
-  refetchInterval: REFRESH_MS,
-  staleTime: REFRESH_MS / 2,
+  refetchInterval: POLL_MS,
+  staleTime: POLL_MS / 2,
   retry: 0
 }
 
@@ -124,15 +119,6 @@ function fmtDuration(seconds) {
   if (hours) parts.push(`${hours}h`)
   if (!days && mins) parts.push(`${mins}m`)
   return parts.length ? parts.join(' ') : '0m'
-}
-
-function refreshIssue(code) {
-  if (code === 4) return 'a provider key was rejected or missing'
-  if (code === 5) return 'a provider is below its configured threshold'
-  if (code === 6) return 'a provider was unreachable'
-  if (code === 3) return 'the provider config needs attention'
-  if (code === 1) return 'a provider check hit an internal error'
-  return `a provider check exited ${code}`
 }
 
 function updatedLabel(value) {
@@ -285,8 +271,6 @@ function BurnclockChip() {
 function BurnclockPage() {
   const badgeQ = useQuery(badgeQuery())
   const offQ = useQuery(offpeakQuery)
-  const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState(null)
 
   const badge = badgeQ.data
   const p = badge?.provider
@@ -297,58 +281,6 @@ function BurnclockPage() {
   const spent = p?.budget?.spent_est
   const overBudget = typeof spent === 'number' && typeof limit === 'number' && spent > limit
   const updated = updatedLabel(badge?.updated_at)
-
-  const refresh = useCallback(async () => {
-    if (busy) return
-    setBusy(true)
-    setNotice(null)
-    try {
-      const before = badge?.updated_at || ''
-      const res = await runShellResult(REFRESH_CMD)
-      const fresh = await badgeQ.refetch()
-      await offQ.refetch()
-      const code = typeof res?.code === 'number' ? res.code : 0
-      const detail = String(res?.stderr || '')
-        .trim()
-        .split('\n')
-        .filter(Boolean)
-        .slice(-1)[0]
-        ?.slice(0, 220)
-      if (!fresh?.data) {
-        setNotice({
-          kind: 'error',
-          text: 'The cache is still missing. Run `burnclock badge --refresh` in a terminal, then try again.'
-        })
-      } else if (fresh.data.updated_at !== before) {
-        setNotice({
-          kind: 'ok',
-          text:
-            code === 0
-              ? 'Balance cache refreshed.'
-              : `Cache refreshed; ${refreshIssue(code)}. The balance row is updated.`
-        })
-      } else if (code !== 0) {
-        setNotice({
-          kind: 'error',
-          text: detail
-            ? `Refresh failed: ${detail}`
-            : `Refresh exited ${code} and the cache did not change.`
-        })
-      } else {
-        setNotice({
-          kind: 'ok',
-          text: 'Already current; the cache was refreshed recently, so there was nothing new to write.'
-        })
-      }
-    } catch {
-      setNotice({
-        kind: 'error',
-        text: 'Could not refresh the cache. Run `burnclock badge --refresh` in a terminal, then try again.'
-      })
-    } finally {
-      setBusy(false)
-    }
-  }, [badge?.updated_at, badgeQ, offQ, busy])
 
   const stateLabel = off?.state_label || (off?.state === 'peak' ? 'PEAK' : 'OFF-PEAK')
   const stateClass =
@@ -388,16 +320,6 @@ function BurnclockPage() {
           jsxs('div', {
             className: 'flex shrink-0 items-center gap-1.5',
             children: [
-              jsx(Button, {
-                size: 'xs',
-                variant: 'ghost',
-                disabled: busy,
-                onClick: () => void refresh(),
-                children: [
-                  jsx(Codicon, { key: 'refresh', name: busy ? 'loading~spin' : 'refresh' }),
-                  jsx('span', { key: 'label', children: busy ? 'Refreshing…' : 'Refresh' })
-                ]
-              }),
               jsx('a', {
                 href: 'https://burnclock.trinityone.cc/',
                 target: '_blank',
@@ -413,17 +335,11 @@ function BurnclockPage() {
         ]
       }),
 
-      notice
-        ? jsx('div', {
-            className: cn(
-              'rounded-lg px-3 py-2 text-[0.75rem]',
-              notice.kind === 'error'
-                ? 'bg-(--ui-red)/10 text-(--ui-red)'
-                : 'bg-(--ui-accent)/10 text-(--ui-text-secondary)'
-            ),
-            children: notice.text
-          })
-        : null,
+      jsx('div', {
+        className: 'text-[0.6875rem] leading-relaxed text-(--ui-text-quaternary)',
+        children:
+          'Read-only page. To update balances, run `burnclock badge --refresh` in a terminal — the plugin never runs the CLI or sees a key. The cache is re-read every 60 s.'
+      }),
 
       jsxs('div', {
         className: 'grid gap-3 md:grid-cols-2',
@@ -486,7 +402,7 @@ function BurnclockPage() {
                 !p
                   ? jsx('div', {
                       className: 'mt-2 text-[0.6875rem] leading-relaxed text-(--ui-text-tertiary)',
-                      children: 'No cache yet. Run `burnclock badge --refresh` in a terminal, then hit Refresh.'
+                      children: 'No cache yet. Run `burnclock badge --refresh` in a terminal; this page re-reads the cache within a minute.'
                     })
                   : null
               ]

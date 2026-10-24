@@ -32,7 +32,8 @@ five days, amber under five, red under two.
   the next peak, the 2× peak delta, minimum-window status and a caution when the
   bundled holiday calendar does not cover the scan horizon.
 - Command reference for `status`, `forecast`, `offpeak`, `budget show` and
-  `badge --refresh`, plus an index of the surfaces burnclock covers.
+  `badge --refresh`, plus an index of the surfaces burnclock covers. The
+  reference is a copy-paste list — the page runs none of these.
 
 ## Requirements
 
@@ -88,24 +89,25 @@ only `burnclock offpeak --json`, which is pure clock math: no provider key, no
 network, no cache write. The off-peak query refreshes every 60 seconds. The page
 never runs a provider refresh on mount or on a timer.
 
-**Refresh button:** an explicit action. Because the Desktop shell has a
-sanitized environment, the page prefers the Hermes burnclock shim at
-`~/.hermes/skills/burnclock/scripts/burnclock-shim.sh`. That shim reads only the
-six allowlisted provider key **names** from `~/.hermes/.env` and passes them to
-the CLI; the plugin never reads, receives, or renders a key value. If the skill
-is not installed, the page falls back to `burnclock` on `PATH`. Provider output
-is scrubbed by `shell.exec` before it reaches the page.
+**No refresh path, by design.** The page holds no refresh button and never runs
+`burnclock badge --refresh`. The Desktop shell runs commands with a sanitized
+environment, so a refresh from inside the plugin could only work by routing
+provider keys from elsewhere into the CLI — and a catalog plugin must not move
+Hermes credentials around `shell.exec`. Balances are refreshed where the CLI has
+its own environment: run `burnclock badge --refresh` in a terminal and the page
+picks the new cache up within 60 seconds. The page says this in place of a
+button.
 
-**Not read by the plugin:** browser profiles, Hermes credentials, or any file
-outside burnclock's cache and the optional shim path above. There is no
+**Not read by the plugin:** browser profiles, Hermes credentials, `~/.hermes/.env`,
+or any file outside burnclock's own cache. There is no
 telemetry, analytics, or update checker. The plugin itself makes no network
 calls; the CLI does when you explicitly refresh, and `offpeak` does not.
 
 Burnclock's status is an aggregate: `badge --refresh` can exit non-zero because
 one provider is below a threshold or has a rejected key even while the selected
-provider's row is valid. The page compares `updated_at` before and after the
-refresh, reports an updated cache as refreshed, and calls an unchanged cache
-“already current” rather than treating it as a failure.
+provider's row is valid. That is the CLI's report to show you; the page only ever
+renders the cached row and its `updated_at` timestamp, so a failed terminal
+refresh never looks like a plugin failure.
 
 ## Notes
 
