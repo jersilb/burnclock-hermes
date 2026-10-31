@@ -108,6 +108,7 @@ function keysQuery(api) {
 }
 
 function runtimeRunway(provider) {
+  if (!provider) return null
   const r = provider.runway_days ?? provider.runway_days_paid ?? provider.forecast?.runway_days_paid
   return typeof r === 'number' && Number.isFinite(r) ? r : null
 }
