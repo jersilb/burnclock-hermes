@@ -33,7 +33,8 @@ five days, amber under five, red under two.
   bundled holiday calendar does not cover the scan horizon.
 - Command reference for `status`, `forecast`, `offpeak`, `budget show` and
   `badge --refresh`, plus an index of the surfaces burnclock covers. The
-  reference is a copy-paste list — the page does not run these commands.
+  reference is a copy-paste list for terminal use; the page itself only triggers
+  the off-peak query and the explicit key-save/refresh actions.
 - API-keys card: choose DeepSeek, OpenRouter, Moonshot, MiniMax or fal, paste
   a key, and save. The plugin's backend writes it to burnclock's own keys file,
   masks it in the UI, and can refresh the cache.
@@ -95,7 +96,8 @@ files, bound to the active session.
 **Page:** reads the same cache for balance, runway and budget. On mount it runs
 only `burnclock offpeak --json`, which is pure clock math: no provider key, no
 network, no cache write. The off-peak query refreshes every 60 seconds. The page
-never runs a provider refresh on mount or on a timer.
+never runs a provider refresh on mount or on a timer; only the explicit
+`Save & refresh` or `Refresh cache` action does.
 
 **API-keys card:** `dashboard/plugin_api.py` exposes `GET /api/plugins/burnclock/keys`,
 `POST /api/plugins/burnclock/keys` and `POST /api/plugins/burnclock/refresh`.
