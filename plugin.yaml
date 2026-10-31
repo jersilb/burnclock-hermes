@@ -11,7 +11,8 @@ description: >
   API-keys card: a user can enter a provider key, the plugin's own backend saves
   it in burnclock's keys file (mode 0600) and refreshes the cache. Provider
   values from Hermes are never forwarded to the CLI. Requires burnclock
-  (pip install burnclock) with a populated cache.
+  (pip install burnclock); a populated cache is preferred, and the card can
+  create the first one.
 tags: [desktop, statusbar, dashboard, cost, tokens, budget, offpeak, burnclock, api-keys]
 requires_hermes: ">=0.22.0"
 license: MIT
