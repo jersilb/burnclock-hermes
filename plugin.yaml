@@ -1,16 +1,17 @@
 name: burnclock
 label: Burnclock
-version: "0.2.1"
+version: "0.3.0"
 author: Jeremy Silbernagel
 homepage: https://github.com/jersilb/burnclock-hermes
 description: >
   Status-bar chip and left-nav dashboard page for burnclock, the local-first CLI
   that tracks AI provider balances and runway. The chip reads burnclock's local
   badge cache and never runs the CLI. The page reads the same cache for balance,
-  runway and budget, shows the DeepSeek Flash off-peak clock, and is read-only:
-  it runs no provider refresh and sees no credential, so balances are refreshed
-  by running burnclock badge --refresh in a terminal. Requires burnclock
+  runway and budget, shows the DeepSeek Flash off-peak clock, and includes an
+  API-keys card: a user can enter a provider key, the plugin's own backend saves
+  it in burnclock's keys file (mode 0600) and refreshes the cache. Provider
+  values from Hermes are never forwarded to the CLI. Requires burnclock
   (pip install burnclock) with a populated cache.
-tags: [desktop, statusbar, dashboard, cost, tokens, budget, offpeak, burnclock]
+tags: [desktop, statusbar, dashboard, cost, tokens, budget, offpeak, burnclock, api-keys]
 requires_hermes: ">=0.22.0"
 license: MIT

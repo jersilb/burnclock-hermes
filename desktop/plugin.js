@@ -1,14 +1,14 @@
 // Burnclock — status-bar chip plus a workspace dashboard page.
 //
-// Data path: the chip reads burnclock's local cache files directly
+// Data path: the chip and page read burnclock's local cache files directly
 // (`badge.txt` for the one-line label, `badge.json` for status/runway) via one
-// `shell.exec` cat. It never runs the CLI, so it can never trigger a refresh,
-// never touches provider keys and makes no network calls. The dashboard page
-// also reads the cache for balance/runway, and runs only the pure-clock
-// `burnclock offpeak --json` command for the DeepSeek window. The plugin has no
-// refresh path at all: balances are refreshed by running `burnclock badge
-// --refresh` in a terminal, with burnclock's own environment, and the page just
-// re-reads the cache every 60 seconds.
+// `shell.exec` cat. They never run the CLI themselves. The page also runs only
+// the pure-clock `burnclock offpeak --json` command for the DeepSeek window.
+//
+// Provider keys are entered in the page's API-keys card. The plugin's own
+// Python backend saves them to burnclock's keys file (mode 0600) and runs the
+// CLI refresh with only those keys; the desktop half never sees a key and there
+// is no path from Hermes credentials into the CLI.
 //
 // Requires: the burnclock CLI (pip install burnclock) to populate the cache.
 
@@ -19,8 +19,11 @@ import {
   cn,
   haptic,
   host,
-  useQuery
+  useMutation,
+  useQuery,
+  useQueryClient
 } from '@hermes/plugin-sdk'
+import { useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'burnclock'
@@ -34,10 +37,11 @@ const CACHE_CMD = 'J="${BURNCLOCK_BADGE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/b
 // Do not pass --timezone local: 0.1.5 rejects the alias; the default is local.
 const CLI_CMD = 'BIN="${BURNCLOCK_BIN:-$(command -v burnclock 2>/dev/null || true)}"; [ -n "$BIN" ] || BIN="$HOME/.local/bin/burnclock"; [ -x "$BIN" ] || exit 127; '
 const OFFPEAK_CMD = CLI_CMD + '"$BIN" offpeak --json 2>/dev/null'
-// No refresh command exists on purpose. Run `burnclock badge --refresh` in a
-// terminal so the CLI sees its own environment; routing Hermes credentials to an
-// external CLI is not something a listed plugin may do.
+// Refresh is backend-only. The API-keys backend runs the CLI with the
+// allowlisted provider values from burnclock's own keys file; it never forwards
+// provider variables inherited from the gateway process.
 const POLL_MS = 60_000
+const KEYS_POLL_MS = 30_000
 
 async function runShellResult(command) {
   const params = { command }
@@ -93,6 +97,16 @@ const offpeakQuery = {
   retry: 0
 }
 
+function keysQuery(api) {
+  return {
+    queryKey: [ID, 'keys'],
+    queryFn: () => api('/keys'),
+    refetchInterval: KEYS_POLL_MS,
+    staleTime: KEYS_POLL_MS / 2,
+    retry: 0
+  }
+}
+
 function runtimeRunway(provider) {
   const r = provider.runway_days ?? provider.runway_days_paid ?? provider.forecast?.runway_days_paid
   return typeof r === 'number' && Number.isFinite(r) ? r : null
@@ -106,6 +120,19 @@ function toneOf(provider) {
   if (runway < 2) return 'bad'
   if (runway < 5) return 'warn'
   return 'good'
+}
+
+function keyTone(provider) {
+  if (!provider?.configured) return 'muted'
+  const state = provider.status?.state
+  if (!state || state === 'OK') return state === 'OK' ? 'good' : 'muted'
+  if (state === 'EMPTY') return 'warn'
+  return 'bad'
+}
+
+function keyStateLabel(provider) {
+  if (!provider?.configured) return 'NOT SET'
+  return provider.status?.state || 'SAVED'
 }
 
 function fmtDuration(seconds) {
@@ -236,6 +263,260 @@ function Feature({ name, children }) {
   })
 }
 
+function KeyCard({ api }) {
+  const qc = useQueryClient()
+  const keysQ = useQuery(keysQuery(api))
+  const [providerId, setProviderId] = useState('')
+  const [value, setValue] = useState('')
+  const [revealed, setRevealed] = useState(false)
+  const [notice, setNotice] = useState(null)
+
+  const providers = keysQ.data?.providers || []
+  const selected = providers.find((provider) => provider.id === providerId) || providers[0]
+  const selectedId = selected?.id || ''
+  const canSave = Boolean(selectedId && value.trim())
+
+  function showRefresh(refresh) {
+    if (!refresh) return ''
+    if (refresh.ok) return ' Balance refreshed.'
+    return ` Refresh reported: ${refresh.message || 'not ready yet.'}`
+  }
+
+  const save = useMutation({
+    mutationFn: () =>
+      api('/keys', {
+        method: 'POST',
+        body: { provider: selectedId, key: value.trim(), refresh: true }
+      }),
+    onSuccess: (result) => {
+      setValue('')
+      setRevealed(false)
+      setNotice({
+        tone: result?.refresh?.ok ? 'good' : 'warn',
+        text:
+          `Saved ${selected?.label || 'provider'} key${result?.masked ? ` (${result.masked})` : ''}.` +
+          showRefresh(result?.refresh)
+      })
+      qc.invalidateQueries({ queryKey: [ID, 'keys'] })
+      qc.invalidateQueries({ queryKey: [ID, 'badge'] })
+    },
+    onError: (error) => {
+      setNotice({
+        tone: 'bad',
+        text: error?.message || 'Could not save the key.'
+      })
+    }
+  })
+
+  const refresh = useMutation({
+    mutationFn: () => api('/refresh', { method: 'POST', body: {} }),
+    onSuccess: (result) => {
+      setNotice({
+        tone: result?.ok ? 'good' : 'warn',
+        text: result?.message || (result?.ok ? 'Balance refreshed.' : 'Refresh did not complete.')
+      })
+      qc.invalidateQueries({ queryKey: [ID, 'keys'] })
+      qc.invalidateQueries({ queryKey: [ID, 'badge'] })
+    },
+    onError: (error) => {
+      setNotice({ tone: 'bad', text: error?.message || 'Could not refresh the cache.' })
+    }
+  })
+
+  const noticeClass =
+    notice?.tone === 'good'
+      ? 'text-(--ui-green)'
+      : notice?.tone === 'warn'
+        ? 'text-(--ui-yellow)'
+        : 'text-(--ui-red)'
+
+  return jsx(Card, {
+    title: 'API keys',
+    aside: jsx('span', {
+      className: 'text-[0.625rem] text-(--ui-text-quaternary)',
+      children: 'burnclock-owned'
+    }),
+    children: jsxs('div', {
+      children: [
+        keysQ.isLoading
+          ? jsx('div', {
+              className: 'text-[0.75rem] text-(--ui-text-tertiary)',
+              children: 'Checking saved keys…'
+            })
+          : null,
+        keysQ.error
+          ? jsx('div', {
+              className: 'rounded-md border border-(--ui-red)/35 px-2.5 py-2 text-[0.6875rem] leading-relaxed text-(--ui-red)',
+              children:
+                'Key setup backend unavailable. In Capabilities → Plugins, rescan or reload Burnclock, then open this page again.'
+            })
+          : null,
+        !keysQ.isLoading && !keysQ.error
+          ? jsxs('div', {
+              children: [
+                jsx('div', {
+                  className: 'divide-y divide-(--ui-stroke-secondary)/60',
+                  children: providers.map((provider) =>
+                    jsxs(
+                      'div',
+                      {
+                        className: 'flex flex-wrap items-center gap-2 py-2 first:pt-0 last:pb-0',
+                        children: [
+                          jsx(StatusDot, { tone: keyTone(provider) }),
+                          jsxs('div', {
+                            className: 'min-w-0 flex-1',
+                            children: [
+                              jsx('div', {
+                                className: 'text-[0.75rem] text-foreground',
+                                children: provider.label
+                              }),
+                              jsx('div', {
+                                className: 'truncate text-[0.625rem] text-(--ui-text-quaternary)',
+                                children: provider.variable
+                              })
+                            ]
+                          }),
+                          jsx('code', {
+                            className: 'rounded border border-(--ui-stroke-secondary)/60 px-1.5 py-0.5 text-[0.625rem] text-(--ui-text-tertiary)',
+                            children: provider.configured ? provider.masked : 'not set'
+                          }),
+                          jsx('span', {
+                            className: cn(
+                              'rounded-full border px-1.5 py-0.5 text-[0.625rem]',
+                              keyTone(provider) === 'good'
+                                ? 'border-(--ui-green)/40 text-(--ui-green)'
+                                : keyTone(provider) === 'warn'
+                                  ? 'border-(--ui-yellow)/40 text-(--ui-yellow)'
+                                  : keyTone(provider) === 'bad'
+                                    ? 'border-(--ui-red)/40 text-(--ui-red)'
+                                    : 'border-(--ui-stroke-secondary) text-(--ui-text-tertiary)'
+                            ),
+                            children: keyStateLabel(provider)
+                          })
+                        ]
+                      },
+                      provider.id
+                    )
+                  )
+                }),
+                jsxs('form', {
+                  className: 'mt-3 space-y-2',
+                  onSubmit: (event) => {
+                    event.preventDefault()
+                    if (canSave && !save.isPending) save.mutate()
+                  },
+                  children: [
+                    jsxs('div', {
+                      className: 'flex flex-wrap items-center gap-2',
+                      children: [
+                        jsx('select', {
+                          value: selectedId,
+                          onChange: (event) => {
+                            setProviderId(event.target.value)
+                            setNotice(null)
+                          },
+                          className:
+                            'h-8 rounded-md border border-(--ui-stroke-secondary) bg-transparent px-2 text-[0.75rem] text-foreground',
+                          'aria-label': 'Provider',
+                          children: providers.map((provider) =>
+                            jsx('option', { value: provider.id, children: provider.label }, provider.id)
+                          )
+                        }),
+                        jsxs('div', {
+                          className: 'flex min-w-[12rem] flex-1 items-center gap-1',
+                          children: [
+                            jsx('input', {
+                              type: revealed ? 'text' : 'password',
+                              value,
+                              onChange: (event) => {
+                                setValue(event.target.value)
+                                setNotice(null)
+                              },
+                              placeholder: selected?.placeholder || 'Paste API key',
+                              autoComplete: 'off',
+                              spellCheck: false,
+                              className:
+                                'h-8 min-w-0 flex-1 rounded-md border border-(--ui-stroke-secondary) bg-transparent px-2.5 font-mono text-[0.75rem] text-foreground placeholder:text-(--ui-text-quaternary)',
+                              'aria-label': `${selected?.label || 'Provider'} API key`
+                            }),
+                            jsx('button', {
+                              type: 'button',
+                              className:
+                                'inline-flex h-8 w-8 items-center justify-center rounded-md border border-(--ui-stroke-secondary) text-(--ui-text-tertiary) hover:text-foreground',
+                              onClick: () => setRevealed((current) => !current),
+                              'aria-label': revealed ? 'Hide API key' : 'Show API key',
+                              children: jsx(Codicon, { name: revealed ? 'eye-closed' : 'eye' })
+                            })
+                          ]
+                        })
+                      ]
+                    }),
+                    jsxs('div', {
+                      className: 'flex flex-wrap items-center gap-2',
+                      children: [
+                        jsx('button', {
+                          type: 'submit',
+                          disabled: !canSave || save.isPending,
+                          className:
+                            'rounded-md border border-(--ui-accent)/40 bg-(--ui-accent)/10 px-2.5 py-1.5 text-[0.75rem] font-medium text-foreground hover:bg-(--ui-accent)/15 disabled:opacity-50',
+                          children: save.isPending ? 'Saving…' : 'Save & refresh'
+                        }),
+                        jsx('button', {
+                          type: 'button',
+                          disabled: refresh.isPending || !keysQ.data?.can_refresh,
+                          className:
+                            'rounded-md border border-(--ui-stroke-secondary) px-2.5 py-1.5 text-[0.75rem] text-(--ui-text-secondary) hover:text-foreground disabled:opacity-50',
+                          onClick: () => refresh.mutate(),
+                          children: refresh.isPending ? 'Refreshing…' : 'Refresh cache'
+                        }),
+                        selected?.console_url
+                          ? jsx('a', {
+                              href: selected.console_url,
+                              target: '_blank',
+                              rel: 'noreferrer',
+                              className:
+                                'inline-flex items-center gap-1 text-[0.6875rem] text-(--ui-text-tertiary) hover:text-foreground',
+                              children: [
+                                jsx(Codicon, { key: 'link', name: 'link-external' }),
+                                jsx('span', { key: 'label', children: 'Get a key' })
+                              ]
+                            })
+                          : null
+                      ]
+                    }),
+                    notice
+                      ? jsx('div', {
+                          className: `text-[0.6875rem] leading-relaxed ${noticeClass}`,
+                          role: 'status',
+                          children: notice.text
+                        })
+                      : null
+                  ]
+                }),
+                jsxs('div', {
+                  className: 'mt-3 text-[0.625rem] leading-relaxed text-(--ui-text-quaternary)',
+                  children: [
+                    'Keys are stored locally in burnclock’s own file',
+                    keysQ.data?.keys_file
+                      ? jsx('code', {
+                          className: 'mx-1 break-all rounded border border-(--ui-stroke-secondary)/60 px-1 py-0.5 text-[0.625rem]',
+                          children: keysQ.data.keys_file
+                        })
+                      : null,
+                    keysQ.data?.keys_file_mode
+                      ? `(mode ${keysQ.data.keys_file_mode}).`
+                      : 'and created with mode 0600 on first save.',
+                    ' The dashboard backend returns only the last four characters and sends a new key only to burnclock during refresh.'
+                  ]
+                })
+              ]
+            })
+          : null
+      ]
+    })
+  })
+}
+
 // ── chip ────────────────────────────────────────────────────────────────────
 
 function BurnclockChip() {
@@ -268,7 +549,7 @@ function BurnclockChip() {
 
 // ── dashboard page ──────────────────────────────────────────────────────────
 
-function BurnclockPage() {
+function BurnclockPage({ api }) {
   const badgeQ = useQuery(badgeQuery())
   const offQ = useQuery(offpeakQuery)
 
@@ -338,8 +619,10 @@ function BurnclockPage() {
       jsx('div', {
         className: 'text-[0.6875rem] leading-relaxed text-(--ui-text-quaternary)',
         children:
-          'Read-only page. To update balances, run `burnclock badge --refresh` in a terminal — the plugin never runs the CLI or sees a key. The cache is re-read every 60 s.'
+          'Add or replace a provider key below. Keys are saved on this Mac in burnclock’s own keys file and used only by the backend refresh; the desktop page never stores a key and only re-reads the cache.'
       }),
+
+      jsx(KeyCard, { api }),
 
       jsxs('div', {
         className: 'grid gap-3 md:grid-cols-2',
@@ -402,7 +685,7 @@ function BurnclockPage() {
                 !p
                   ? jsx('div', {
                       className: 'mt-2 text-[0.6875rem] leading-relaxed text-(--ui-text-tertiary)',
-                      children: 'No cache yet. Run `burnclock badge --refresh` in a terminal; this page re-reads the cache within a minute.'
+                      children: 'No cache yet. Add a provider key above and refresh; this page re-reads the cache within a minute.'
                     })
                   : null
               ]
@@ -589,7 +872,7 @@ export default {
       id: 'burnclock-page',
       area: 'routes',
       data: { path: ROUTE },
-      render: () => jsx(BurnclockPage, {})
+      render: () => jsx(BurnclockPage, { api: ctx.rest })
     })
 
     ctx.register({

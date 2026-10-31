@@ -1,0 +1,8 @@
+{
+  "name": "burnclock",
+  "label": "Burnclock",
+  "description": "Provider-key setup and balance refresh for the Burnclock dashboard.",
+  "version": "0.3.0",
+  "api": "plugin_api.py",
+  "tab": { "hidden": true }
+}
